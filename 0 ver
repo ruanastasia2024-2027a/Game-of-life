@@ -1,1 +1,184 @@
+#include <ncurses.h>
+#include <stdio.h>
+#include <stdlib.h>
 
+// Устанавливаем размеры игрового поля по заданию
+#define WIDTH 80
+#define HEIGHT 25
+
+// Даем имена живым и мертвым клеткам
+#define ALIVE 1
+#define DEAD 0
+#define DELAY_MIN 10
+#define DELAY_MAX 500
+#define DELAY_STEP 20
+
+void input_map(int map[HEIGHT][WIDTH]);
+void draw_map(int map[HEIGHT][WIDTH]);
+int count_neighbors(int map[HEIGHT][WIDTH], int y, int x);
+void update_map(int current[HEIGHT][WIDTH], int next[HEIGHT][WIDTH]);
+void copy_map(int source[HEIGHT][WIDTH], int dest[HEIGHT][WIDTH]);
+int is_game_over(int map[HEIGHT][WIDTH], int prev[HEIGHT][WIDTH]);
+void game_loop(int current[HEIGHT][WIDTH]);
+
+int main() {
+    int map[HEIGHT][WIDTH];
+    int error = 0;
+
+    input_map(map);
+
+    // Возвращаем чтение с файла на клавиатуру терминала
+    if (freopen("/dev/tty", "r", stdin) == NULL) {
+        fprintf(stderr, "Error reopening tty\n");
+        error = 1;
+    }
+
+    // Запускаем графическую оболочку ncurses
+    if (error == 0) {
+        initscr();
+        cbreak();
+        noecho();
+        curs_set(0);
+        nodelay(stdscr, 1);
+
+        game_loop(map);
+
+        endwin();
+    }
+    return error;
+}
+
+void input_map(int map[HEIGHT][WIDTH]) {
+    for (int i = 0; i < HEIGHT; i++) {
+        for (int j = 0; j < WIDTH; j++) {
+            if (scanf("%d", &map[i][j]) != 1) {
+                map[i][j] = DEAD;
+            }
+        }
+    }
+}
+
+// Выводим картинку в терминал
+void draw_map(int map[HEIGHT][WIDTH]) {
+    clear();  // Очищаем экран перед каждым новым кадром
+    for (int i = 0; i < HEIGHT; i++) {
+        for (int j = 0; j < WIDTH; j++) {
+            // Живая клетка -  решетка, мертвая — точка
+            if (map[i][j] == ALIVE) {
+                printw("#");
+            } else {
+                printw(".");
+            }
+        }
+        printw("\n");
+    }
+
+    printw("Controls: A - speed up | Z - speed down | Space - exit\n");
+    refresh();
+}
+
+// Подсчет  живых соседей вокруг конкретной клетки
+int count_neighbors(int map[HEIGHT][WIDTH], int y, int x) {
+    int count = 0;
+    // Цикл по квадрату 3х3 вокруг центральной клетки
+    for (int i = -1; i <= 1; i++) {
+        for (int j = -1; j <= 1; j++) {
+            // Центральную клетку (которую проверяем) игнорируем
+            if (i != 0 || j != 0) {
+                // Создаем «замкнутое поле» с помощью остатка от деления (%)
+                int ny = (y + i + HEIGHT) % HEIGHT;
+                int nx = (x + j + WIDTH) % WIDTH;
+                if (map[ny][nx] == ALIVE) {
+                    count++;
+                }
+            }
+        }
+    }
+    return count;
+}
+
+// Применяем правила игры Конвея ко всем клеткам поля
+void update_map(int current[HEIGHT][WIDTH], int next[HEIGHT][WIDTH]) {
+    for (int i = 0; i < HEIGHT; i++) {
+        for (int j = 0; j < WIDTH; j++) {
+            int neighbors = count_neighbors(current, i, j);
+            if (current[i][j] == ALIVE) {
+                // Живая клетка остается жить, только если у нее 2 или 3 соседа
+                if (neighbors == 2 || neighbors == 3) {
+                    next[i][j] = ALIVE;
+                } else {
+                    next[i][j] = DEAD;
+                }
+            } else {
+                // В мертвой клетке зарождается жизнь, если соседей ровно 3
+                if (neighbors == 3) {
+                    next[i][j] = ALIVE;
+                } else {
+                    next[i][j] = DEAD;
+                }
+            }
+        }
+    }
+}
+
+// Вспомогательная функция для перезаписи одной матрицы в другую
+void copy_map(int source[HEIGHT][WIDTH], int dest[HEIGHT][WIDTH]) {
+    for (int i = 0; i < HEIGHT; i++) {
+        for (int j = 0; j < WIDTH; j++) {
+            dest[i][j] = source[i][j];
+        }
+    }
+}
+// Проверяем условия, при которых симуляция должна завершиться
+int is_game_over(int map[HEIGHT][WIDTH], int prev[HEIGHT][WIDTH]) {
+    int all_dead = 1;
+    int unchanged = 1;
+
+    for (int i = 0; i < HEIGHT; i++) {
+        for (int j = 0; j < WIDTH; j++) {
+            if (map[i][j] == ALIVE) {
+                all_dead = 0;  // Нашли живую клетку — мир не мертв
+            }
+            if (map[i][j] != prev[i][j]) {
+                unchanged = 0;  // Нашли отличие — мир изменился
+            }
+        }
+    }
+    return (all_dead || unchanged);
+}
+// Основной игровой движок симуляции
+void game_loop(int current[HEIGHT][WIDTH]) {
+    int next[HEIGHT][WIDTH];
+    int prev[HEIGHT][WIDTH];
+    int delay = 80;
+    int running = 1;
+
+    while (running == 1) {
+        draw_map(current);
+        update_map(current, next);
+
+        if (is_game_over(next, current) == 1) {
+            running = 0;
+        }
+
+        copy_map(current, prev);
+        copy_map(next, current);
+
+        int ch = getch();
+        if ((ch == 'a' || ch == 'A') && delay > DELAY_MIN) {
+            delay -= DELAY_STEP;
+        } else if ((ch == 'z' || ch == 'Z') && delay < DELAY_MAX) {
+            delay += DELAY_STEP;
+        } else if (ch == ' ') {
+            running = 0;
+        }
+        flushinp();
+        napms(delay);
+    }
+
+    if (is_game_over(current, prev) == 1) {
+        nodelay(stdscr, 0);
+        while (getch() != ' ') {
+        }
+    }
+}
